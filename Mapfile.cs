@@ -572,15 +572,93 @@ namespace RandomMapGenerator
             overlayPack.WriteIniFile();
         }
 
+        private static int CalcHeaderXPos(int x, int y)
+        {
+            int x1 = x * 256 + 128;
+            int y1 = y * 256 + 128;
+            int x2 = (x1 - y1) * 30;
+            return (x2 / 256 + 512 * 30) / 60;
+        }
+
+        private static int CalcHeaderYPos(int x, int y)
+        {
+            int x1 = x * 256 + 128;
+            int y1 = y * 256 + 128;
+            int y2 = (x1 + y1) * 15;
+            return (y2 / 256) / 30;
+        }
+
+        /// <summary>
+        /// Reimplementation of FinalAlert 2's MC_GetHeaderRect (MapCode.cpp).
+        /// It scans the whole isometric grid and takes the bounding box of all
+        /// cells that belong to the "local" (playable/visible) rectangle.
+        /// Cell height is taken into account, exactly like the original editor.
+        /// </summary>
+        private void CalculateHeaderRect(string localSize, out int startX, out int startY, out int width, out int height)
+        {
+            var parts = localSize.Split(',');
+            int localLeft = int.Parse(parts[0]);
+            int localTop = int.Parse(parts[1]);
+            int localWidth = int.Parse(parts[2]);
+            int localHeight = int.Parse(parts[3]);
+
+            int max = Width + Height;
+            byte[] cellHeights = new byte[max * max];
+            if (IsoTileList != null)
+            {
+                foreach (var tile in IsoTileList)
+                {
+                    int x = tile.Rx;
+                    int y = tile.Ry;
+                    if (x < max && y < max)
+                        cellHeights[x * max + y] = tile.Z;
+                }
+            }
+
+            int leastX = 10000;
+            int leastY = 10000;
+            int mostX = 0;
+            int mostY = 0;
+
+            for (int x = 0; x < max; x++)
+            {
+                for (int y = 0; y < max; y++)
+                {
+                    int cellHeight = cellHeights[x * max + y];
+
+                    if ((x + y > Width + 2 * localTop + cellHeight) &&
+                        (x + y <= Width + 2 * (localTop + localHeight + 1) + cellHeight) &&
+                        (x - y < 2 * (localLeft + localWidth) - Width) &&
+                        (y - x < Width - 2 * localLeft))
+                    {
+                        int rx = CalcHeaderXPos(x, y);
+                        int ry = CalcHeaderYPos(x, y);
+
+                        if (rx < leastX) leastX = rx;
+                        if (rx > mostX) mostX = rx;
+                        if (ry < leastY) leastY = ry;
+                        if (ry > mostY) mostY = ry;
+                    }
+                }
+            }
+
+            startX = leastX;
+            startY = leastY;
+            width = mostX - leastX;
+            height = mostY - leastY;
+        }
+
         public void CalculateStartingWaypoints(string filePath)
         {
             var MapFile = new IniFile(filePath);
 
-            var LocalSize = MapFile.GetStringValue("Map", "LocalSize", "0,0,0,0");
-            var LocalWidth = int.Parse(LocalSize.Split(',')[2]);
-            var LocalHeight = int.Parse(LocalSize.Split(',')[3]);
-            MapFile.SetStringValue("Header", "Width", (LocalWidth - 1).ToString());
-            MapFile.SetStringValue("Header", "Height", LocalHeight.ToString());
+            var localSize = MapFile.GetStringValue("Map", "LocalSize", "0,0,0,0");
+            int startX, startY, headerWidth, headerHeight;
+            CalculateHeaderRect(localSize, out startX, out startY, out headerWidth, out headerHeight);
+            MapFile.SetStringValue("Header", "Width", headerWidth.ToString());
+            MapFile.SetStringValue("Header", "Height", headerHeight.ToString());
+            MapFile.SetStringValue("Header", "StartX", startX.ToString());
+            MapFile.SetStringValue("Header", "StartY", startY.ToString());
 
             int playerNum = 0;
             while (MapFile.KeyExists("Waypoints", playerNum.ToString()) && playerNum < 8)
