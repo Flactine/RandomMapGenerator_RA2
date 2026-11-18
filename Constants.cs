@@ -7,6 +7,14 @@ namespace RandomMapGenerator
 {
     static class Constants
     {
+        /// <summary>VERA20K supports width + height up to 1024 (vanilla RA2/YR: 512).</summary>
+        public const int MaxMapSpan = 1024;
+        /// <summary>VERA20K supports up to 30 starting players (vanilla RA2/YR: 8).</summary>
+        public const int MaxPlayers = 30;
+        /// <summary>Retail maps use a 512x512 overlay plane; extended maps use 1024x1024.</summary>
+        public const int RetailCellGridSize = 512;
+        public const int ExtendedCellGridSize = 1024;
+
         public static string WorkFolder { get; set; } = @"C:\Users\hanfangxu\Documents\GitHub\MapEditor_RA2\";
         public static string FileName = "map.yrm";
         public static string SaveFileName = "Output.txt";

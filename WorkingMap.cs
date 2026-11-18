@@ -1445,22 +1445,20 @@ namespace RandomMapGenerator
         }
         public static void ReadyForMiniMap()
         {
-            for (int k = 0; k < WaypointList.Count; k++)
+            for (int k = 0; k < WaypointList.Count && k < Constants.MaxPlayers; k++)
             {
-                if (k > 7)
-                    break;
-
                 var waypoint = WaypointList[k];
 
-                AbsTile[waypoint.X, waypoint.Y].AroundPlayerLocation = true;
-                AbsTile[waypoint.X + 1, waypoint.Y + 1].AroundPlayerLocation = true;
-                AbsTile[waypoint.X - 1, waypoint.Y - 1].AroundPlayerLocation = true;
-                AbsTile[waypoint.X + 1, waypoint.Y - 1].AroundPlayerLocation = true;
-                AbsTile[waypoint.X - 1, waypoint.Y + 1].AroundPlayerLocation = true;
-                AbsTile[waypoint.X + 1, waypoint.Y].AroundPlayerLocation = true;
-                AbsTile[waypoint.X - 1, waypoint.Y].AroundPlayerLocation = true;
-                AbsTile[waypoint.X, waypoint.Y - 1].AroundPlayerLocation = true;
-                AbsTile[waypoint.X, waypoint.Y + 1].AroundPlayerLocation = true;
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    for (int dy = -1; dy <= 1; dy++)
+                    {
+                        int x = waypoint.X + dx;
+                        int y = waypoint.Y + dy;
+                        if (IsValidAT(x, y))
+                            AbsTile[x, y].AroundPlayerLocation = true;
+                    }
+                }
             }
 
             for (int k = 0; k < OverlayList.Count; k++)
@@ -1915,6 +1913,128 @@ namespace RandomMapGenerator
             }
             PlaceTiberiumMUNearPlayer();
         }
+
+        /// <summary>
+        /// Places a requested number of players around the four map corners.
+        /// This is used by the --players option so VERA20K's 30-player limit
+        /// does not depend on the legacy 4-per-side N/S/W/E placement code.
+        /// </summary>
+        public static void PlacePlayersEvenly(int number)
+        {
+            if (number <= 0)
+                return;
+
+            string[] directions = { "NW", "NE", "SE", "SW" };
+            int[] counts = new int[directions.Length];
+            for (int i = 0; i < number; i++)
+                counts[i % directions.Length]++;
+
+            for (int i = 0; i < directions.Length; i++)
+            {
+                if (counts[i] > 0)
+                    PlacePlayerLocation(counts[i], directions[i]);
+            }
+        }
+
+        /// <summary>
+        /// Distributes players over the whole playable map instead of only
+        /// along its edges. Candidate map members are chosen with farthest-point
+        /// sampling, so every new start is placed as far as possible from the
+        /// starts already selected.
+        /// </summary>
+        public static void PlacePlayersSpread(int number)
+        {
+            if (number <= 0)
+                return;
+
+            List<string> startingUnits = new List<string>();
+            foreach (var absMU in AbstractMapUnitList)
+            {
+                if (absMU.MapUnitName.Contains("spawn"))
+                    startingUnits.Add(absMU.MapUnitName);
+            }
+            if (startingUnits.Count == 0)
+            {
+                Log.Warning("No spawn map units found; cannot place spread players.");
+                return;
+            }
+
+            var candidates = new List<int[]>();
+            for (int x = 0; x < AbstractMapMemberMatrix.GetLength(0); x++)
+            {
+                for (int y = 0; y < AbstractMapMemberMatrix.GetLength(1); y++)
+                {
+                    var member = AbstractMapMemberMatrix[x, y];
+                    if (IsValidAMMM(x, y) && member.IsAllOnVisibleMap && !member.Placed)
+                        candidates.Add(new int[] { x, y });
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                Log.Warning("No free visible map members found; cannot place spread players.");
+                return;
+            }
+
+            int placeCount = Math.Min(number, candidates.Count);
+            if (placeCount < number)
+            {
+                Log.Warning($"Only {placeCount} free map members available for {number} spread players.");
+            }
+
+            var selected = new List<int[]>();
+            int[] center = GetCentralAbsMapMemberLocation();
+
+            int firstIndex = 0;
+            double bestCenterDistance = double.MaxValue;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                double dx = candidates[i][0] - center[0];
+                double dy = candidates[i][1] - center[1];
+                double distance = dx * dx + dy * dy;
+                if (distance < bestCenterDistance)
+                {
+                    bestCenterDistance = distance;
+                    firstIndex = i;
+                }
+            }
+            selected.Add(candidates[firstIndex]);
+            candidates.RemoveAt(firstIndex);
+
+            while (selected.Count < placeCount)
+            {
+                int bestIndex = 0;
+                double bestDistance = -1;
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    double nearest = double.MaxValue;
+                    foreach (var chosen in selected)
+                    {
+                        double dx = candidates[i][0] - chosen[0];
+                        double dy = candidates[i][1] - chosen[1];
+                        double distance = dx * dx + dy * dy;
+                        if (distance < nearest)
+                            nearest = distance;
+                    }
+                    if (nearest > bestDistance)
+                    {
+                        bestDistance = nearest;
+                        bestIndex = i;
+                    }
+                }
+                selected.Add(candidates[bestIndex]);
+                candidates.RemoveAt(bestIndex);
+            }
+
+            foreach (var location in selected)
+            {
+                RandomSetMapUnitNoOverlap(location[0], location[1], new List<string>(startingUnits));
+                Log.Information("Spread player is set in abstract map member [{0},{1}]", location[0], location[1]);
+            }
+
+            PlaceTiberiumMUNearPlayer();
+        }
+
         //start to place the next group of tiberium
         public static void PlaceTiberiumMUNearPlayer()
         {

@@ -6,6 +6,28 @@ How to use
 - click run.bat to create random map
 - click help.bat to see additional command lines
 - examples of map units can be seen in /MapUnits
+
+VERA20K extended maps
+-------
+VERA20K supports maps with `Width + Height <= 1024` and up to 30 starting players.
+
+- `-n/--name` sets the output file name; `-i/--internal-name` sets the map's
+  internal `[Basic] Name` independently. Batch modes append `1,2...` to the
+  file name and `01,02...` to the internal name. Quote values that contain
+  spaces, e.g. `-i "Random City"`.
+- `--players 30` places 30 players evenly around the four corners. If no size is
+  given, the generator uses `500x500`; you can also pass e.g. `-w 512 -h 512`.
+- Add `--spread-players` to distribute the players across the whole map instead
+  of only along the edges, e.g.
+  `--players 30 --spread-players -w 500 -h 400`.
+- The legacy per-side options still work, e.g.
+  `--nwp 8 --nep 8 --sep 7 --swp 7`. `N/S/W/E` remain limited to four players
+  each; use the corner options or `--players` for larger counts. With
+  `--spread-players`, the direction counts only determine the total.
+- Extended maps use the 1024x1024 overlay layout required by VERA20K. The
+  external CNCMaps renderer is skipped for them, but the in-map preview is
+  still generated.
+
 ![map](使用方法.png)
 ![map](thumb_map.jpg)
 ![map](islands_map.jpg)

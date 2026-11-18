@@ -404,6 +404,17 @@ namespace RandomMapGenerator
             }
         }
 
+        /// <summary>
+        /// VERA20K uses a 1024x1024 overlay plane for maps whose width+height
+        /// exceeds 512; vanilla maps keep the retail 512x512 plane.
+        /// </summary>
+        private int GetOverlayGridSize()
+        {
+            return Width + Height > Constants.RetailCellGridSize
+                ? Constants.ExtendedCellGridSize
+                : Constants.RetailCellGridSize;
+        }
+
         public List<Overlay> ReadOverlay(string path)
         {
             OverlayList = new List<Overlay>();
@@ -422,8 +433,10 @@ namespace RandomMapGenerator
                 sectionIndex++;
             }
 
+            int gridSize = GetOverlayGridSize();
+            int packSize = gridSize * gridSize;
             byte[] format80Data = Convert.FromBase64String(OverlayPackString);
-            var overlayPack = new byte[1 << 18];
+            var overlayPack = new byte[packSize];
             Format5.DecodeInto(format80Data, overlayPack, 80);
 
             IniSection overlayDataSection = mapFile.GetSection("OverlayDataPack");
@@ -439,13 +452,14 @@ namespace RandomMapGenerator
             }
 
             format80Data = Convert.FromBase64String(OverlayDataPackString);
-            var overlayDataPack = new byte[1 << 18];
+            var overlayDataPack = new byte[packSize];
             Format5.DecodeInto(format80Data, overlayDataPack, 80);
 
             foreach (var tile in IsoTileList)
             {
                 if (tile == null) continue;
-                int idx = tile.Rx + 512 * tile.Ry;
+                int idx = tile.Rx + gridSize * tile.Ry;
+                if (idx < 0 || idx >= packSize) continue;
                 byte overlay_id = overlayPack[idx];
 
                 if (overlay_id != 0xff)
@@ -493,19 +507,20 @@ namespace RandomMapGenerator
 
         public void SaveOverlay(string path)
         {
-
-            var overlayPack = new byte[1 << 18];
+            int gridSize = GetOverlayGridSize();
+            int packSize = gridSize * gridSize;
+            var overlayPack = new byte[packSize];
             for (int i = 0; i < overlayPack.Length; i++)
             {
                 overlayPack[i] = 0xff;
             }
-            var overlayDataPack = new byte[1 << 18];
+            var overlayDataPack = new byte[packSize];
             foreach (var overlay in OverlayList)
             {
-                int index = overlay.Tile.Rx + 512 * overlay.Tile.Ry;
+                int index = overlay.Tile.Rx + gridSize * overlay.Tile.Ry;
+                if (index < 0 || index >= packSize) continue;
                 overlayPack[index] = overlay.OverlayID;
                 overlayDataPack[index] = overlay.OverlayValue;
-
             }
 
             var compressedPack = Format5.Encode(overlayPack, 80);
@@ -661,7 +676,7 @@ namespace RandomMapGenerator
             MapFile.SetStringValue("Header", "StartY", startY.ToString());
 
             int playerNum = 0;
-            while (MapFile.KeyExists("Waypoints", playerNum.ToString()) && playerNum < 8)
+            while (MapFile.KeyExists("Waypoints", playerNum.ToString()) && playerNum < Constants.MaxPlayers)
             {
                 var waypoint = MapFile.GetStringValue("Waypoints", playerNum.ToString(), "000000");
                 int length = waypoint.Length;
@@ -676,10 +691,11 @@ namespace RandomMapGenerator
             }
             MapFile.SetStringValue("Header", "NumberStartingPoints", playerNum.ToString());
             MapFile.SetStringValue("Basic", "MaxPlayer", playerNum.ToString());
-            if (playerNum == 1)
-                MapFile.SetStringValue("Basic", "MinPlayer", "1");
-            else if (playerNum == 0)
-                MapFile.SetStringValue("Basic", "MinPlayer", "0");
+            // VERA20K reads [Basic] MaxPlayers (plural) to admit maps with 9-30 starts.
+            MapFile.SetStringValue("Basic", "MaxPlayers", playerNum.ToString());
+            int minPlayer = playerNum == 0 ? 0 : (playerNum == 1 ? 1 : 2);
+            MapFile.SetStringValue("Basic", "MinPlayer", minPlayer.ToString());
+            MapFile.SetStringValue("Basic", "MinPlayers", minPlayer.ToString());
             MapFile.WriteIniFile();
         }
         public void CorrectPreviewSize(string filePath)

@@ -23,8 +23,11 @@ namespace RandomMapGenerator
 
         public int Height { get; set; }
 
-        [Option('n', "name", Default = "", Required = false, HelpText = "设置地图的名称")]
+        [Option('n', "name", Default = "", Required = false, HelpText = "设置地图文件名（批量生成时自动追加 1、2...）")]
         public string Name { get; set; }
+
+        [Option('i', "internal-name", Default = "", Required = false, HelpText = "设置地图内部名称 [Basic] Name（批量生成时自动追加 01、02...）")]
+        public string InternalName { get; set; }
 
         [Option("type", Required = true, HelpText = "指定地图的类型（WorkingFolder下的子文件夹）")]
         public string Type { get; set; }
@@ -67,6 +70,12 @@ namespace RandomMapGenerator
 
         [Option("number", Required = false, HelpText = "生成地图的数量，不能与total-random共用")]
         public int Number { get; set; }
+
+        [Option("players", Required = false, HelpText = "直接指定玩家数量（1-30），自动分布在地图四周；不能与各方向人数选项共用")]
+        public int Players { get; set; }
+
+        [Option("spread-players", Required = false, HelpText = "把玩家均匀散布到地图内部，而不是只放在边缘；配合 --players 或方向人数使用")]
+        public bool SpreadPlayers { get; set; }
 
         [Option('d' ,"damanged-building", Required = false, HelpText = "建筑物将会随机受损")]
         public bool DamangedBuilding { get; set; }
@@ -174,7 +183,55 @@ namespace RandomMapGenerator
 
             if (option.TotalRandom > 0 && option.Number > 0)
                 return;
-            
+
+            if (option.Players < 0 || option.Players > Constants.MaxPlayers)
+            {
+                Log.Error($"玩家数量必须在 1 到 {Constants.MaxPlayers} 之间。");
+                return;
+            }
+            int explicitPlayers = option.NE + option.NW + option.SE + option.SW + option.N + option.S + option.W + option.E;
+            int requestedPlayers = option.Players > 0
+                ? option.Players
+                : (option.TotalRandom == 0 ? explicitPlayers : 0);
+            if (option.Players > 0 && explicitPlayers > 0)
+            {
+                Log.Error("--players 不能与各方向人数选项同时使用。");
+                return;
+            }
+            if (option.Width > 0 && option.Height > 0 && option.Width + option.Height > Constants.MaxMapSpan)
+            {
+                Log.Error($"地图宽度 + 高度不能超过 {Constants.MaxMapSpan}（当前为 {option.Width + option.Height}）。");
+                return;
+            }
+            if (option.Players == 0 && option.TotalRandom == 0)
+            {
+                if (explicitPlayers > Constants.MaxPlayers)
+                {
+                    Log.Error($"Player number cannot exceed {Constants.MaxPlayers}!");
+                    return;
+                }
+                if (!option.SpreadPlayers && (option.N > 4 || option.S > 4 || option.W > 4 || option.E > 4))
+                {
+                    Log.Error("N/S/W/E 每个方向最多 4 人；30 人地图请使用 --players 30 或 NE/NW/SE/SW。");
+                    return;
+                }
+            }
+            if (option.SpreadPlayers && requestedPlayers == 0)
+            {
+                Log.Error("--spread-players 需要同时指定玩家数量（--players 或方向人数）。");
+                return;
+            }
+            if (requestedPlayers > 8)
+            {
+                int mapWidth = option.Width > 0 ? option.Width : 500;
+                int mapHeight = option.Height > 0 ? option.Height : 500;
+                if (mapWidth + mapHeight > Constants.MaxMapSpan)
+                {
+                    Log.Error($"地图宽度 + 高度不能超过 {Constants.MaxMapSpan}（当前为 {mapWidth + mapHeight}）。");
+                    return;
+                }
+            }
+
             while (loop)
             {
                 Log.Information("******************************************************");
@@ -182,14 +239,23 @@ namespace RandomMapGenerator
                 Log.Information("******************************************************");
                 string fullPath = "";
                 string internalNameRandom = "";
+                if (option.Name != "")
+                {
+                    outputName = option.Name;
+                }
+                if (!string.IsNullOrWhiteSpace(option.InternalName))
+                {
+                    internalName = option.InternalName;
+                }
+                else if (option.Name != "")
+                {
+                    // Backward compatibility: -n used to set both the file name
+                    // and the map's [Basic] Name.
+                    internalName = option.Name;
+                }
+
                 if (option.TotalRandom == 0 && option.Number == 0)
                 {
-                    if (option.Name != "")
-                    {
-                        outputName = option.Name;
-                        internalName = option.Name;
-                    }
-                    
                     fullPath = OutputFolder + outputName + "." + outputExtension;
                     Console.WriteLine("Generating random map " + outputName + "." + outputExtension + " ...");
                 }
@@ -205,7 +271,13 @@ namespace RandomMapGenerator
                 //for total random
                 int player = r.Next(1300);
 
-                if (option.TotalRandom == 0)
+                if (requestedPlayers > 8)
+                {
+                    int mapWidth = option.Width > 0 ? option.Width : 500;
+                    int mapHeight = option.Height > 0 ? option.Height : 500;
+                    WorkingMap.Initialize(mapWidth, mapHeight, WorkingFolder);
+                }
+                else if (option.TotalRandom == 0)
                 {
                     if (option.Width > 0 && option.Height > 0)
                         WorkingMap.Initialize(option.Width, option.Height, WorkingFolder);
@@ -229,30 +301,34 @@ namespace RandomMapGenerator
                     //small map case
                 }
 
+                if (WorkingMap.Width + WorkingMap.Height > Constants.MaxMapSpan)
+                {
+                    Log.Error($"地图宽度 + 高度不能超过 {Constants.MaxMapSpan}（当前为 {WorkingMap.Width + WorkingMap.Height}）。");
+                    return;
+                }
+
                 //Sterilize once
                 if (count == 0)
                     WorkingMap.SterilizeMapUnit(WorkingFolder);
 
-                int range = WorkingMap.Width + WorkingMap.Height;
-
-                if (option.TotalRandom == 0)
+                if (option.SpreadPlayers)
                 {
-                    if (option.NE + option.NW + option.SE + option.SW + option.N + option.S + option.W + option.E > 8)
-                    {
-                        Log.Error("Player number cannot exceed 8!");
-                        return;
-                    }
-                    else
-                    {
-                        WorkingMap.PlacePlayerLocation(option.N, "N");
-                        WorkingMap.PlacePlayerLocation(option.S, "S");
-                        WorkingMap.PlacePlayerLocation(option.W, "W");
-                        WorkingMap.PlacePlayerLocation(option.E, "E");
-                        WorkingMap.PlacePlayerLocation(option.NE, "NE");
-                        WorkingMap.PlacePlayerLocation(option.SE, "SE");
-                        WorkingMap.PlacePlayerLocation(option.NW, "NW");
-                        WorkingMap.PlacePlayerLocation(option.SW, "SW");
-                    }
+                    WorkingMap.PlacePlayersSpread(requestedPlayers);
+                }
+                else if (option.Players > 0)
+                {
+                    WorkingMap.PlacePlayersEvenly(option.Players);
+                }
+                else if (option.TotalRandom == 0)
+                {
+                    WorkingMap.PlacePlayerLocation(option.N, "N");
+                    WorkingMap.PlacePlayerLocation(option.S, "S");
+                    WorkingMap.PlacePlayerLocation(option.W, "W");
+                    WorkingMap.PlacePlayerLocation(option.E, "E");
+                    WorkingMap.PlacePlayerLocation(option.NE, "NE");
+                    WorkingMap.PlacePlayerLocation(option.SE, "SE");
+                    WorkingMap.PlacePlayerLocation(option.NW, "NW");
+                    WorkingMap.PlacePlayerLocation(option.SW, "SW");
                 }
                 else
                 {
@@ -398,7 +474,12 @@ namespace RandomMapGenerator
                 }*/
 
                 if (!option.NoThumbnail)
-                    mapFile.RenderMap(fullPath);
+                {
+                    if (mapFile.Width + mapFile.Height <= Constants.RetailCellGridSize)
+                        mapFile.RenderMap(fullPath);
+                    else
+                        Log.Warning("扩展地图（宽+高>512）跳过外部 CNCMaps 渲染器，地图缩略图仍由 CreateBitMapbyMap 生成。");
+                }
 
 
                 
